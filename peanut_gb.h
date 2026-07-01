@@ -32,6 +32,8 @@
 #ifndef PEANUT_GB_H
 #define PEANUT_GB_H
 
+#define TRACER 1
+
 #if defined(__has_include)
 # if __has_include("version.all")
 #  include "version.all"	/* Version information */
@@ -46,6 +48,7 @@
 #include <stdint.h>	/* Required for int types */
 #include <string.h>	/* Required for memset */
 #include <time.h>	/* Required for tm struct */
+#include <stdio.h>
 
 /**
 * If PEANUT_GB_IS_LITTLE_ENDIAN is positive, then Peanut-GB will be configured
@@ -97,7 +100,7 @@
 
 /* Adds more code to improve LCD rendering accuracy. */
 #ifndef PEANUT_GB_HIGH_LCD_ACCURACY
-# define PEANUT_GB_HIGH_LCD_ACCURACY 1
+# define PEANUT_GB_HIGH_LCD_ACCURACY 0
 #endif
 
 /* Use intrinsic functions. This may produce smaller and faster code. */
@@ -780,7 +783,7 @@ struct gb_s
  * Internal function used to read bytes.
  * addr is host platform endian.
  */
-uint8_t __gb_read(struct gb_s *gb, uint16_t addr)
+uint8_t __gb_read_internal(struct gb_s *gb, uint16_t addr)
 {
 	switch(PEANUT_GB_GET_MSN16(addr))
 	{
@@ -887,10 +890,18 @@ uint8_t __gb_read(struct gb_s *gb, uint16_t addr)
 	PGB_UNREACHABLE();
 }
 
+uint8_t __gb_read(struct gb_s* gb, uint16_t addr) {
+	const uint8_t ret = __gb_read_internal(gb, addr);
+#ifdef TRACER
+	printf("  [%04x] => %02x\n", addr, ret);
+#endif
+	return ret;
+}
+
 /**
  * Internal function used to write bytes.
  */
-void __gb_write(struct gb_s *gb, uint_fast16_t addr, uint8_t val)
+void __gb_write_internal(struct gb_s *gb, uint_fast16_t addr, uint8_t val)
 {
 	switch(PEANUT_GB_GET_MSN16(addr))
 	{
@@ -1250,6 +1261,13 @@ void __gb_write(struct gb_s *gb, uint_fast16_t addr, uint8_t val)
 
 	/* Invalid writes are ignored. */
 	return;
+}
+
+void __gb_write(struct gb_s* gb, uint_fast16_t addr, uint8_t val) {
+#ifdef TRACER
+	printf("  [%04x] <= %02x\n", addr, val);
+#endif
+	__gb_write_internal(gb, addr, val);
 }
 
 uint8_t __gb_execute_cb(struct gb_s *gb)
@@ -1864,8 +1882,13 @@ void __gb_step_cpu(struct gb_s *gb)
 		break;
 	}
 
+#ifdef TRACER
+	const struct cpu_registers_s regs_prior = gb->cpu_reg;
+#endif
+
 	/* Obtain opcode */
 	opcode = __gb_read(gb, gb->cpu_reg.pc.reg++);
+
 	inst_cycles = op_cycles[opcode];
 
 	/* Execute opcode */
@@ -2102,7 +2125,7 @@ void __gb_step_cpu(struct gb_s *gb)
 		if((a & 0x100) == 0x100)
 			gb->cpu_reg.f.f_bits.c = 1;
 
-		gb->cpu_reg.a = a;
+		gb->cpu_reg.a = (uint8_t)a;
 		gb->cpu_reg.f.f_bits.z = (gb->cpu_reg.a == 0);
 		gb->cpu_reg.f.f_bits.h = 0;
 
@@ -3271,6 +3294,28 @@ void __gb_step_cpu(struct gb_s *gb)
 		(gb->gb_error)(gb, GB_INVALID_OPCODE, gb->cpu_reg.pc.reg - 1);
 		PGB_UNREACHABLE();
 	}
+
+#if TRACER
+	printf("%04x: %02x (%u)\n", regs_prior.pc.reg, opcode, inst_cycles);
+	if (regs_prior.a != gb->cpu_reg.a) {
+		printf("  a  %02x => %02x\n", regs_prior.a, gb->cpu_reg.a);
+	}
+	if (regs_prior.bc.reg != gb->cpu_reg.bc.reg) {
+		printf("  bc %04x => %04x\n", regs_prior.bc.reg, gb->cpu_reg.bc.reg);
+	}
+	if (regs_prior.de.reg != gb->cpu_reg.de.reg) {
+		printf("  de %04x => %04x\n", regs_prior.de.reg, gb->cpu_reg.de.reg);
+	}
+	if (regs_prior.hl.reg != gb->cpu_reg.hl.reg) {
+		printf("  hl %04x => %04x\n", regs_prior.hl.reg, gb->cpu_reg.hl.reg);
+	}
+	if (regs_prior.sp.reg != gb->cpu_reg.sp.reg) {
+		printf("  sp %04x => %04x\n", regs_prior.sp.reg, gb->cpu_reg.sp.reg);
+	}
+	if (regs_prior.f.reg != gb->cpu_reg.f.reg) {
+		printf("  f  %02x => %02x\n", regs_prior.f.reg, gb->cpu_reg.f.reg);
+	}
+#endif
 
 	do
 	{
